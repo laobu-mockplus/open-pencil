@@ -220,6 +220,42 @@ function requestFrame(browserDocument: Document): Promise<void> {
   })
 }
 
+/**
+ * 图片固有尺寸和 Web Font 都会改变浏览器最终排版；如果在资源尚未完成时测量，
+ * 后续 SceneGraph 会永久记录一个只存在于加载过程中的临时几何值。
+ */
+async function waitForLayoutResources(browserDocument: Document): Promise<void> {
+  const images = Array.from(browserDocument.images)
+  for (const image of images) image.loading = 'eager'
+
+  const imagePromises = images.map((image) => {
+    if (image.complete) return Promise.resolve()
+    return new Promise<void>((resolve) => {
+      image.addEventListener('load', () => resolve(), { once: true })
+      image.addEventListener('error', () => resolve(), { once: true })
+    })
+  })
+  const resourcesReady = Promise.all([browserDocument.fonts.ready, ...imagePromises])
+  let timeoutId: ReturnType<typeof setTimeout> | undefined
+  try {
+    await Promise.race([
+      resourcesReady,
+      new Promise<never>((_, reject) => {
+        timeoutId = setTimeout(
+          () => reject(new Error('Browser CSS runtime timed out waiting for layout resources')),
+          15_000
+        )
+      })
+    ])
+  } finally {
+    if (timeoutId !== undefined) clearTimeout(timeoutId)
+  }
+
+  // 资源完成后再跨两帧，让浏览器完成样式重算和布局提交。
+  await requestFrame(browserDocument)
+  await requestFrame(browserDocument)
+}
+
 function applySandboxHostStyle(element: HTMLElement, viewport?: BrowserImportViewport): void {
   const width = viewport?.width ?? 1000
   const height = viewport?.height
@@ -264,7 +300,7 @@ async function computeStylesInShadowRoot(
   browserDocument.body.append(host)
 
   try {
-    await requestFrame(browserDocument)
+    await waitForLayoutResources(browserDocument)
     const assetView = browserDocument.defaultView
     if (!assetView) throw new TypeError('Browser CSS runtime requires a window for asset loading')
     return await copyComputedStyles(
@@ -319,7 +355,7 @@ async function computeStylesInIframe(
     content.innerHTML = serializeHTML(designDocument)
     iframeDocument.body.append(content)
 
-    await requestFrame(iframeDocument)
+    await waitForLayoutResources(iframeDocument)
     const assetView = browserDocument.defaultView
     if (!assetView) throw new TypeError('Browser CSS runtime requires a window for asset loading')
     return await copyComputedStyles(

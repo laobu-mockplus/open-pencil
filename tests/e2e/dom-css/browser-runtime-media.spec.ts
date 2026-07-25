@@ -134,6 +134,27 @@ test.describe('@open-pencil/dom-css browser CSS media and image oracle', () => {
     expect(imageNode?.hasImageBytes).toBe(true)
   })
 
+  test('waits for delayed image intrinsic sizing before measuring browser geometry', async ({
+    page
+  }) => {
+    await page.route('**/delayed-wide.svg', async (route) => {
+      await new Promise((resolve) => setTimeout(resolve, 200))
+      await route.fulfill({
+        body: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1790 1162"></svg>',
+        contentType: 'image/svg+xml'
+      })
+    })
+
+    const imageNode = await publicBrowserImageNode(
+      page,
+      '<img class="media" alt="Preview" src="/delayed-wide.svg" />',
+      '.media { display: block; width: 320px; height: auto; }'
+    )
+
+    expect(imageNode?.width).toBe(320)
+    expect(imageNode?.height).toBeCloseTo(207.73, 1)
+  })
+
   test('resolves relative assets against the registered source base URL', async ({ page }) => {
     const baseURL = `http://localhost:1420/@fs${process.cwd()}/tests/fixtures/dom-css/`
     const imageNode = await publicBrowserImageNode(
