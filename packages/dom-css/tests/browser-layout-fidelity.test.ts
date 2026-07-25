@@ -133,6 +133,40 @@ describe('@open-pencil/dom-css browser layout fidelity', () => {
     expect(image?.height).toBe(727.05)
   })
 
+  it('keeps browser-measured single-line text editable without clipping later words', () => {
+    const graph = designDocumentToSceneGraph({
+      type: 'document',
+      children: [
+        {
+          type: 'element',
+          tagName: 'span',
+          attrs: {},
+          browserBounds: { x: 0, y: 0, width: 126.875, height: 20 },
+          computedStyle: {
+            display: 'inline',
+            'font-family': 'Inter',
+            'font-size': '14px',
+            'line-height': '20px',
+            width: '126.875px'
+          },
+          children: [
+            {
+              type: 'text',
+              text: 'Launch before lunch',
+              browserBounds: { x: 0, y: 0, width: 126.875, height: 20 }
+            }
+          ]
+        }
+      ]
+    })
+    const page = graph.getPages()[0]
+    const frame = page ? graph.getChildren(page.id)[0] : undefined
+    const text = frame ? graph.getChildren(frame.id)[0] : undefined
+
+    expect(text?.type).toBe('TEXT')
+    expect(text?.textAutoResize).toBe('WIDTH_AND_HEIGHT')
+  })
+
   it('preserves unsupported grid alignment with measured child positions', () => {
     const graph = designDocumentToSceneGraph({
       type: 'document',

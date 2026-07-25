@@ -410,6 +410,20 @@ function applyTextStyle(
   if (textCase !== 'ORIGINAL') node.textCase = textCase
 
   if (pickStyle(style, 'white-space') === 'nowrap') node.maxLines = 1
+
+  /*
+   * 浏览器与 CanvasKit 的字形度量存在细小差异。固定文本框会把浏览器中的
+   * 最后一词换到不可见的新行；按浏览器实测行数设置自动尺寸，既保留多行
+   * 宽度约束，也让导入后的文字可以持续编辑而不被静默裁切。
+  */
+  if (browserBounds) {
+    const measuredLineHeight =
+      typeof node.lineHeight === 'number' && node.lineHeight > 0
+        ? node.lineHeight
+        : node.fontSize * 1.2
+    node.textAutoResize =
+      browserBounds.height <= measuredLineHeight + 1 ? 'WIDTH_AND_HEIGHT' : 'HEIGHT'
+  }
 }
 
 function createTextNode(

@@ -529,6 +529,7 @@ describe('@open-pencil/dom-css conversion', () => {
     expect(text.width).toBe(180)
     expect(text.height).toBe(96)
     expect(text.lineHeight).toBe(24)
+    expect(text.textAutoResize).toBe('HEIGHT')
   })
 
   it('maps flex wrapping, align-self, clipping, and absolute positioning', () => {
