@@ -299,6 +299,20 @@ function applyElementStyle(
   style: DesignStyleDeclaration
 ): void {
   setNodeBox(node, style, element.browserBounds)
+  /*
+   * 图片是 replaced element；其最终尺寸还会受到固有宽高比、object-fit 和
+   * 包含块影响。getComputedStyle 的 width/height 可能仍反映声明值，因此在
+   * 浏览器运行时存在实际布局框时，以真实布局框作为 SceneGraph 几何事实。
+   */
+  if (
+    element.tagName.toLowerCase() === 'img' &&
+    element.browserBounds &&
+    element.browserBounds.width > 0 &&
+    element.browserBounds.height > 0
+  ) {
+    node.width = element.browserBounds.width
+    node.height = element.browserBounds.height
+  }
   applyPositioning(node, style)
   applyPadding(node, style)
 

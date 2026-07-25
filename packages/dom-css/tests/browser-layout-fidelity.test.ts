@@ -103,6 +103,36 @@ describe('@open-pencil/dom-css browser layout fidelity', () => {
     expect(rowChildren.map((child) => child.x)).toEqual([0, 24, 48])
   })
 
+  it('uses the final browser box for replaced images when declared dimensions disagree', () => {
+    const graph = designDocumentToSceneGraph({
+      type: 'document',
+      children: [
+        {
+          type: 'element',
+          tagName: 'img',
+          attrs: {
+            src: TRANSPARENT_PIXEL_DATA_URL,
+            width: '1200',
+            height: '1200'
+          },
+          browserBounds: { x: 0, y: 0, width: 1120, height: 727.05 },
+          computedStyle: {
+            display: 'block',
+            width: '1120px',
+            height: '1120px',
+            'object-fit': 'cover'
+          },
+          children: []
+        }
+      ]
+    })
+    const page = graph.getPages()[0]
+    const image = page ? graph.getChildren(page.id)[0] : undefined
+
+    expect(image?.width).toBe(1120)
+    expect(image?.height).toBe(727.05)
+  })
+
   it('preserves unsupported grid alignment with measured child positions', () => {
     const graph = designDocumentToSceneGraph({
       type: 'document',
