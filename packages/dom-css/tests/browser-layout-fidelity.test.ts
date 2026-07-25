@@ -167,6 +167,28 @@ describe('@open-pencil/dom-css browser layout fidelity', () => {
     expect(text?.textAutoResize).toBe('WIDTH_AND_HEIGHT')
   })
 
+  it('does not create scene nodes for elements hidden by browser layout', () => {
+    const graph = designDocumentToSceneGraph({
+      type: 'document',
+      children: [
+        {
+          type: 'element',
+          tagName: 'span',
+          attrs: {},
+          browserBounds: { x: 0, y: 0, width: 0, height: 0 },
+          computedStyle: {
+            display: 'none',
+            'font-size': '14px',
+            'line-height': '20px'
+          },
+          children: [{ type: 'text', text: '/annually' }]
+        }
+      ]
+    })
+
+    expect([...graph.getAllNodes()].some((node) => node.name.includes('annually'))).toBe(false)
+  })
+
   it('preserves unsupported grid alignment with measured child positions', () => {
     const graph = designDocumentToSceneGraph({
       type: 'document',

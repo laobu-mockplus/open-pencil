@@ -408,13 +408,13 @@ async function rasterizeSVGImage(
     if (!context) throw new Error('Browser CSS runtime could not create SVG raster canvas')
     context.drawImage(rasterSource, 0, 0, width, height)
     const rasterBlob = await new Promise<Blob>((resolve, reject) => {
-      canvas.toBlob(
-        (blob) =>
-          blob
-            ? resolve(blob)
-            : reject(new Error('Browser CSS runtime could not encode SVG raster image')),
-        'image/png'
-      )
+      canvas.toBlob((blob) => {
+        if (!blob) {
+          reject(new Error('Browser CSS runtime could not encode SVG raster image'))
+          return
+        }
+        resolve(blob)
+      }, 'image/png')
     })
     return new Uint8Array(await rasterBlob.arrayBuffer())
   } finally {
