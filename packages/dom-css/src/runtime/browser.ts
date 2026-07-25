@@ -379,6 +379,49 @@ function bytesToBase64(bytes: Uint8Array): string {
   return globalThis.btoa(binary)
 }
 
+async function rasterizeSVGImage(
+  response: Response,
+  image: HTMLImageElement,
+  view: Window
+): Promise<Uint8Array> {
+  const browserGlobals = view as Window & typeof globalThis
+  const sourceBlob = await response.blob()
+  const sourceURL = browserGlobals.URL.createObjectURL(sourceBlob)
+  const rasterSource = new browserGlobals.Image()
+  try {
+    await new Promise<void>((resolve, reject) => {
+      rasterSource.addEventListener('load', () => resolve(), { once: true })
+      rasterSource.addEventListener(
+        'error',
+        () => reject(new Error('Browser CSS runtime could not decode SVG image')),
+        { once: true }
+      )
+      rasterSource.src = sourceURL
+    })
+    const bounds = image.getBoundingClientRect()
+    const width = Math.max(1, Math.ceil(bounds.width || rasterSource.naturalWidth))
+    const height = Math.max(1, Math.ceil(bounds.height || rasterSource.naturalHeight))
+    const canvas = image.ownerDocument.createElement('canvas')
+    canvas.width = width
+    canvas.height = height
+    const context = canvas.getContext('2d')
+    if (!context) throw new Error('Browser CSS runtime could not create SVG raster canvas')
+    context.drawImage(rasterSource, 0, 0, width, height)
+    const rasterBlob = await new Promise<Blob>((resolve, reject) => {
+      canvas.toBlob(
+        (blob) =>
+          blob
+            ? resolve(blob)
+            : reject(new Error('Browser CSS runtime could not encode SVG raster image')),
+        'image/png'
+      )
+    })
+    return new Uint8Array(await rasterBlob.arrayBuffer())
+  } finally {
+    browserGlobals.URL.revokeObjectURL(sourceURL)
+  }
+}
+
 async function embedImageSource(
   designElement: DesignElement,
   domElement: Element,
@@ -405,11 +448,19 @@ async function embedImageSource(
   if (!contentType.startsWith('image/')) {
     throw new Error(`图片资源类型无效：${source}（${contentType}）`)
   }
-  const bytes = new Uint8Array(await response.arrayBuffer())
+  /*
+   * CanvasKit 不能直接解码作为 <img> 资源的 SVG 字节。这里仍保留图片节点
+   * 语义，由浏览器按当前真实布局框无损绘制成 PNG；内联 <svg> 继续走 Vector。
+   */
+  const embeddedContentType = contentType === 'image/svg+xml' ? 'image/png' : contentType
+  const bytes =
+    contentType === 'image/svg+xml'
+      ? await rasterizeSVGImage(response, image, view)
+      : new Uint8Array(await response.arrayBuffer())
   if (bytes.length === 0) throw new Error(`图片资源内容为空：${source}`)
 
   designElement.sourceAssetURL = source
-  designElement.attrs.src = `data:${contentType};base64,${bytesToBase64(bytes)}`
+  designElement.attrs.src = `data:${embeddedContentType};base64,${bytesToBase64(bytes)}`
 }
 
 async function copyComputedStyles(

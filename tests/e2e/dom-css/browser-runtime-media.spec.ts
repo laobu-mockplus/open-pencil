@@ -166,6 +166,7 @@ test.describe('@open-pencil/dom-css browser CSS media and image oracle', () => {
 
     expect(imageNode?.fillType).toBe('IMAGE')
     expect(imageNode?.hasImageBytes).toBe(true)
+    expect(imageNode?.imageBytesPrefix).toEqual([137, 80, 78, 71])
     expect(imageNode?.sourceURL).toBe(`${baseURL}test-image.svg`)
   })
 

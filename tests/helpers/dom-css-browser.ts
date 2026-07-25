@@ -121,11 +121,16 @@ export async function publicBrowserImageNode(
       const pageNode = graph.getPages()[0]
       const image = pageNode ? graph.getChildren(pageNode.id)[0] : undefined
       const fill = image?.fills[0]
+      const imageBytes =
+        fill?.type === 'IMAGE' && fill.imageHash
+          ? graph.images.get(fill.imageHash)
+          : undefined
       return image
         ? {
             fillType: fill?.type,
             hasImageBytes: fill?.imageHash ? graph.images.has(fill.imageHash) : false,
             height: image.height,
+            imageBytesPrefix: imageBytes ? Array.from(imageBytes.slice(0, 4)) : [],
             imageScaleMode: fill?.imageScaleMode,
             sourceURL: image.pluginData.find(
               (entry) =>
