@@ -3,8 +3,10 @@ import type { Vector } from '@open-pencil/scene-graph/primitives'
 
 import {
   importClipboardNodes,
+  importSceneFragment,
   parseFigmaClipboard,
-  parseOpenPencilClipboard
+  parseOpenPencilClipboard,
+  type OpenPencilSceneFragment
 } from '#core/clipboard'
 import { computeAllLayouts } from '#core/layout'
 
@@ -87,7 +89,7 @@ export function createClipboardActions(ctx: EditorContext) {
   async function pasteFromHTML(html: string, cursorPos?: Vector, options: PasteOptions = {}) {
     const openPencil = parseOpenPencilClipboard(html)
     if (openPencil) {
-      const created = pasteOpenPencilNodes(openPencil.nodes, openPencil.images, cursorPos, options)
+      const created = pasteOpenPencilFragment(openPencil.fragment, cursorPos, options)
       await fontActions.loadFontsForNodes(created)
       return
     }
@@ -126,31 +128,22 @@ export function createClipboardActions(ctx: EditorContext) {
     }
   }
 
-  function pasteOpenPencilNodes(
-    nodes: Array<SceneNode & { children?: SceneNode[] }>,
-    images: Map<string, Uint8Array>,
+  function pasteOpenPencilFragment(
+    fragment: OpenPencilSceneFragment,
     cursorPos?: Vector,
     options: PasteOptions = {}
   ) {
     const prevSelection = new Set(ctx.state.selectedIds)
     const replacementTargets = options.replaceSelection ? selectedReplacementTargets(ctx) : []
-    for (const [hash, bytes] of images) ctx.graph.images.set(hash, bytes)
-
-    const created: string[] = []
-    const createNodeTree = (source: SceneNode & { children?: SceneNode[] }, parentId: string) => {
-      const { id: _id, childIds: _childIds, children = [], parentId: _parentId, ...rest } = source
-      const node = ctx.graph.createNode(source.type, parentId, {
-        ...structuredClone(rest),
-        x: source.x + 20,
-        y: source.y + 20,
-        childIds: []
-      })
-      for (const child of children) createNodeTree(child, node.id)
-      return node.id
-    }
 
     const pasteTarget = replacementTargets[0]?.parentId ?? resolvePasteTarget(ctx)
-    for (const node of nodes) created.push(createNodeTree(node, pasteTarget))
+    const imported = importSceneFragment(ctx.graph, pasteTarget, fragment)
+    const created = imported.rootNodeIds
+    // 保持既有剪贴板粘贴偏移语义；模板工厂直接调用公共 API 时不会获得该 UI 偏移。
+    for (const nodeId of imported.idMap.values()) {
+      const node = ctx.graph.getNode(nodeId)
+      if (node) ctx.graph.updateNode(nodeId, { x: node.x + 20, y: node.y + 20 })
+    }
     if (created.length === 0) return created
 
     if (replacementTargets.length > 0) {

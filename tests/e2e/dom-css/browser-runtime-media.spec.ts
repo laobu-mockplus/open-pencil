@@ -1,6 +1,10 @@
+import process from 'node:process'
+
 import {
+  browserRuntimeComputeStyles,
   computedStyleProperties,
   publicBrowserImageNode,
+  publicBrowserStructure,
   setStyledContent
 } from '#tests/helpers/dom-css-browser'
 
@@ -10,6 +14,67 @@ const TRANSPARENT_PIXEL_DATA_URL =
   'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADElEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=='
 
 test.describe('@open-pencil/dom-css browser CSS media and image oracle', () => {
+  test('uses the requested import viewport and records browser geometry', async ({ page }) => {
+    const document = {
+      type: 'document' as const,
+      children: [
+        {
+          type: 'element' as const,
+          tagName: 'section',
+          attrs: { class: 'feature-grid' },
+          children: [
+            {
+              type: 'element' as const,
+              tagName: 'article',
+              attrs: {},
+              children: [{ type: 'text' as const, text: 'One' }]
+            },
+            {
+              type: 'element' as const,
+              tagName: 'article',
+              attrs: {},
+              children: [{ type: 'text' as const, text: 'Two' }]
+            }
+          ]
+        }
+      ]
+    }
+    const css = `
+      * { box-sizing: border-box; }
+      .feature-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 24px;
+        width: 100%;
+        padding: 16px;
+      }
+      .feature-grid article { height: 80px; }
+      @media (max-width: 639px) {
+        .feature-grid { grid-template-columns: minmax(0, 1fr); gap: 12px; }
+      }
+    `
+
+    const desktop = await browserRuntimeComputeStyles(page, document, css, 'iframe', {
+      width: 1440,
+      height: 900
+    })
+    const mobile = await browserRuntimeComputeStyles(page, document, css, 'iframe', {
+      width: 390,
+      height: 844
+    })
+    const desktopGrid = desktop.children[0]
+    const mobileGrid = mobile.children[0]
+
+    expect(desktopGrid?.type).toBe('element')
+    expect(mobileGrid?.type).toBe('element')
+    if (desktopGrid?.type !== 'element' || mobileGrid?.type !== 'element') return
+
+    expect(desktopGrid.computedStyle?.['grid-template-columns']).toBe('692px 692px')
+    expect(mobileGrid.computedStyle?.['grid-template-columns']).toBe('358px')
+    expect(desktopGrid.browserBounds).toEqual({ x: 0, y: 0, width: 1440, height: 112 })
+    expect(mobileGrid.browserBounds).toEqual({ x: 0, y: 0, width: 390, height: 204 })
+  })
+
   test('resolves media queries and inherited em/rem units in a real browser', async ({ page }) => {
     await page.setViewportSize({ width: 900, height: 600 })
     await setStyledContent(
@@ -55,5 +120,68 @@ test.describe('@open-pencil/dom-css browser CSS media and image oracle', () => {
     expect(imageNode?.fillType).toBe('IMAGE')
     expect(imageNode?.imageScaleMode).toBe('FIT')
     expect(imageNode?.hasImageBytes).toBe(true)
+  })
+
+  test('downloads same-origin image assets into the scene graph image store', async ({ page }) => {
+    const imageNode = await publicBrowserImageNode(
+      page,
+      '<img class="media" alt="OpenPencil" src="/pwa-192.png" />',
+      '.media { object-fit: cover; width: 192px; height: 192px; }'
+    )
+
+    expect(imageNode?.type).toBe('FRAME')
+    expect(imageNode?.fillType).toBe('IMAGE')
+    expect(imageNode?.hasImageBytes).toBe(true)
+  })
+
+  test('resolves relative assets against the registered source base URL', async ({ page }) => {
+    const baseURL = `http://localhost:1420/@fs${process.cwd()}/tests/fixtures/dom-css/`
+    const imageNode = await publicBrowserImageNode(
+      page,
+      '<img class="media" alt="Fixture" src="test-image.svg" />',
+      '.media { width: 20px; height: 20px; }',
+      { baseURL }
+    )
+
+    expect(imageNode?.fillType).toBe('IMAGE')
+    expect(imageNode?.hasImageBytes).toBe(true)
+    expect(imageNode?.sourceURL).toBe(`${baseURL}test-image.svg`)
+  })
+
+  test('projects responsive Grid, SVG vectors, and embedded images together', async ({ page }) => {
+    const structure = await publicBrowserStructure(
+      page,
+      `
+        <section class="feature-grid">
+          <article>
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+              <path d="M5 12l4 4L19 6" stroke-width="2" stroke-linecap="round" />
+            </svg>
+          </article>
+          <img class="preview" src="${TRANSPARENT_PIXEL_DATA_URL}" alt="Preview" />
+        </section>
+      `,
+      `
+        * { box-sizing: border-box; }
+        .feature-grid {
+          display: grid;
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          gap: 24px;
+          width: 100%;
+        }
+        .icon { color: #16a34a; width: 24px; height: 24px; }
+        .preview { width: 120px; height: 80px; object-fit: cover; }
+        @media (max-width: 639px) {
+          .feature-grid { grid-template-columns: minmax(0, 1fr); gap: 12px; }
+        }
+      `,
+      { width: 390, height: 844 }
+    )
+
+    expect(structure.rootLayoutMode).toBe('GRID')
+    expect(structure.rootColumns).toHaveLength(1)
+    expect(structure.gridCount).toBe(1)
+    expect(structure.vectorCount).toBe(1)
+    expect(structure.imageCount).toBe(1)
   })
 })

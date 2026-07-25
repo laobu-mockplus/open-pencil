@@ -387,7 +387,12 @@ export async function buildFigmaClipboardHTML(
 
 export {
   buildOpenPencilClipboardHTML,
+  exportSceneFragment,
+  importSceneFragment,
   parseOpenPencilClipboard,
+  type ImportedSceneFragment,
   type OpenPencilClipboardData,
+  type OpenPencilClipboardNode,
+  type OpenPencilSceneFragment,
   type TextPictureBuilder
 } from './clipboard/openpencil'

@@ -2,7 +2,8 @@ import { fetchIconifyCollection, searchIconify } from './api'
 import { buildIconData } from './svg'
 import type { IconData, IconSearchResult } from './types'
 
-export type { IconData, IconPath, IconSearchResult } from './types'
+export { extractPaths as extractSVGPaths, scalePathInfos as scaleSVGPathInfos } from './svg'
+export type { IconData, IconPath, IconPathInfo, IconSearchResult } from './types'
 
 const iconCache = new Map<string, IconData>()
 

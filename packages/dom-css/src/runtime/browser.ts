@@ -1,15 +1,28 @@
+/**
+ * 浏览器 CSS 运行时：在隔离 DOM 中执行真实 CSS 级联、响应式计算与排版测量。
+ * iframe 是可配置视口的事实环境；输出的 DesignDOM 只记录浏览器已经算出的结果。
+ */
 import { serializeHTML } from '../serialize'
 import type {
   CSSComputeOptions,
   CSSRuntime,
   DesignDocument,
   DesignElement,
-  DesignNode
+  DesignNode,
+  DesignText
 } from '../types'
 
 export interface BrowserCSSRuntimeOptions {
   document?: Document
   sandbox?: 'shadow-root' | 'iframe'
+  viewport?: BrowserImportViewport
+  embedExternalImages?: boolean
+  baseURL?: string
+}
+
+export interface BrowserImportViewport {
+  width: number
+  height: number
 }
 
 const DEFAULT_COMPUTED_PROPERTIES = [
@@ -47,6 +60,13 @@ const DEFAULT_COMPUTED_PROPERTIES = [
   'font-style',
   'font-weight',
   'gap',
+  'grid-auto-flow',
+  'grid-column-end',
+  'grid-column-start',
+  'grid-row-end',
+  'grid-row-start',
+  'grid-template-columns',
+  'grid-template-rows',
   'height',
   'justify-content',
   'letter-spacing',
@@ -139,24 +159,31 @@ function parseHTMLWithDocument(browserDocument: Document, html: string): DesignD
   }
 }
 
-function collectElementPairs(
+interface BrowserNodePairs {
+  elements: [DesignElement, Element][]
+  texts: [DesignText, Text][]
+}
+
+function collectBrowserNodePairs(
   designNode: DesignNode,
   domNode: Node,
-  pairs: [DesignElement, Element][]
+  pairs: BrowserNodePairs
 ): void {
-  if (designNode.type === 'text') return
+  if (designNode.type === 'text') {
+    if (domNode.nodeType === Node.TEXT_NODE) {
+      pairs.texts.push([designNode, domNode as Text])
+    }
+    return
+  }
   const view = domNode.ownerDocument?.defaultView
   if (!view || !(domNode instanceof view.Element)) return
 
-  pairs.push([designNode, domNode])
+  pairs.elements.push([designNode, domNode])
 
-  const elementChildren = designNode.children.filter(
-    (child): child is DesignElement => child.type === 'element'
-  )
-  const domChildren = Array.from(domNode.children)
-  for (const [index, child] of elementChildren.entries()) {
+  const domChildren = Array.from(domNode.childNodes)
+  for (const [index, child] of designNode.children.entries()) {
     const domChild = domChildren.at(index)
-    if (domChild) collectElementPairs(child, domChild, pairs)
+    if (domChild) collectBrowserNodePairs(child, domChild, pairs)
   }
 }
 
@@ -185,13 +212,17 @@ function requestFrame(browserDocument: Document): Promise<void> {
   })
 }
 
-function applySandboxHostStyle(element: HTMLElement): void {
+function applySandboxHostStyle(element: HTMLElement, viewport?: BrowserImportViewport): void {
+  const width = viewport?.width ?? 1000
+  const height = viewport?.height
   element.style.cssText = [
     'position: fixed',
     'left: -100000px',
     'top: 0',
-    'width: 1000px',
-    'height: auto',
+    `width: ${width}px`,
+    height ? `height: ${height}px` : 'height: auto',
+    'border: 0',
+    'box-sizing: border-box',
     'visibility: hidden',
     'pointer-events: none',
     'contain: layout style paint'
@@ -202,10 +233,16 @@ async function computeStylesInShadowRoot(
   browserDocument: Document,
   designDocument: DesignDocument,
   cssText: string,
-  options: CSSComputeOptions
+  options: CSSComputeOptions,
+  viewport?: BrowserImportViewport,
+  embedExternalImages = true,
+  baseURL?: string
 ): Promise<DesignDocument> {
+  if (baseURL) {
+    throw new TypeError('Browser CSS runtime baseURL requires the iframe sandbox')
+  }
   const host = browserDocument.createElement('div')
-  applySandboxHostStyle(host)
+  applySandboxHostStyle(host, viewport)
 
   const shadow = host.attachShadow({ mode: 'open' })
   const style = browserDocument.createElement('style')
@@ -213,13 +250,22 @@ async function computeStylesInShadowRoot(
   shadow.append(style)
 
   const content = browserDocument.createElement('div')
+  content.style.width = '100%'
   content.innerHTML = serializeHTML(designDocument)
   shadow.append(content)
   browserDocument.body.append(host)
 
   try {
     await requestFrame(browserDocument)
-    return copyComputedStyles(designDocument, content, options)
+    const assetView = browserDocument.defaultView
+    if (!assetView) throw new TypeError('Browser CSS runtime requires a window for asset loading')
+    return await copyComputedStyles(
+      designDocument,
+      content,
+      options,
+      embedExternalImages,
+      assetView
+    )
   } finally {
     host.remove()
   }
@@ -229,10 +275,13 @@ async function computeStylesInIframe(
   browserDocument: Document,
   designDocument: DesignDocument,
   cssText: string,
-  options: CSSComputeOptions
+  options: CSSComputeOptions,
+  viewport?: BrowserImportViewport,
+  embedExternalImages = true,
+  baseURL?: string
 ): Promise<DesignDocument> {
   const iframe = browserDocument.createElement('iframe')
-  applySandboxHostStyle(iframe)
+  applySandboxHostStyle(iframe, viewport)
   browserDocument.body.append(iframe)
 
   try {
@@ -241,40 +290,126 @@ async function computeStylesInIframe(
     iframeDocument.open()
     iframeDocument.write(`<!doctype html><html><head></head><body></body></html>`)
     iframeDocument.close()
+    iframeDocument.documentElement.style.width = '100%'
+    iframeDocument.documentElement.style.height = '100%'
+    iframeDocument.body.style.margin = '0'
+    iframeDocument.body.style.width = '100%'
+    iframeDocument.body.style.minHeight = '100%'
+
+    if (baseURL) {
+      const base = iframeDocument.createElement('base')
+      base.href = baseURL
+      iframeDocument.head.append(base)
+    }
 
     const style = iframeDocument.createElement('style')
     style.textContent = cssText
     iframeDocument.head.append(style)
 
     const content = iframeDocument.createElement('div')
+    content.style.width = '100%'
     content.innerHTML = serializeHTML(designDocument)
     iframeDocument.body.append(content)
 
     await requestFrame(iframeDocument)
-    return copyComputedStyles(designDocument, content, options)
+    const assetView = browserDocument.defaultView
+    if (!assetView) throw new TypeError('Browser CSS runtime requires a window for asset loading')
+    return await copyComputedStyles(
+      designDocument,
+      content,
+      options,
+      embedExternalImages,
+      assetView
+    )
   } finally {
     iframe.remove()
   }
 }
 
-function copyComputedStyles(
+function bytesToBase64(bytes: Uint8Array): string {
+  const chunkSize = 0x8000
+  let binary = ''
+  for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(offset, offset + chunkSize))
+  }
+  return globalThis.btoa(binary)
+}
+
+async function embedImageSource(
+  designElement: DesignElement,
+  domElement: Element,
+  view: Window
+): Promise<void> {
+  if (designElement.tagName.toLowerCase() !== 'img') return
+  const image = domElement as HTMLImageElement
+  const source = image.currentSrc || image.src || designElement.attrs.src
+  if (!source || source.startsWith('data:')) return
+
+  let response: Response
+  try {
+    response = await view.fetch(source, { credentials: 'same-origin' })
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error)
+    throw new Error(`无法下载图片资源：${source}（${reason}）`, { cause: error })
+  }
+  if (!response.ok) {
+    throw new Error(`无法下载图片资源：${source}（HTTP ${response.status}）`)
+  }
+
+  const contentType =
+    response.headers.get('content-type')?.split(';')[0] || 'application/octet-stream'
+  if (!contentType.startsWith('image/')) {
+    throw new Error(`图片资源类型无效：${source}（${contentType}）`)
+  }
+  const bytes = new Uint8Array(await response.arrayBuffer())
+  if (bytes.length === 0) throw new Error(`图片资源内容为空：${source}`)
+
+  designElement.sourceAssetURL = source
+  designElement.attrs.src = `data:${contentType};base64,${bytesToBase64(bytes)}`
+}
+
+async function copyComputedStyles(
   designDocument: DesignDocument,
   content: Element,
-  options: CSSComputeOptions
-): DesignDocument {
+  options: CSSComputeOptions,
+  embedExternalImages: boolean,
+  assetView: Window
+): Promise<DesignDocument> {
   const view = content.ownerDocument.defaultView
   if (!view) throw new TypeError('Browser CSS runtime requires getComputedStyle')
 
   const nextDocument = structuredClone(designDocument)
-  const pairs: [DesignElement, Element][] = []
+  const pairs: BrowserNodePairs = { elements: [], texts: [] }
+  const contentBounds = content.getBoundingClientRect()
   const domChildren = Array.from(content.childNodes)
   for (const [index, child] of nextDocument.children.entries()) {
     const domChild = domChildren.at(index)
-    if (domChild) collectElementPairs(child, domChild, pairs)
+    if (domChild) collectBrowserNodePairs(child, domChild, pairs)
   }
 
-  for (const [designElement, domElement] of pairs) {
+  for (const [designElement, domElement] of pairs.elements) {
     designElement.computedStyle = computedStyleToRecord(view.getComputedStyle(domElement), options)
+    const bounds = domElement.getBoundingClientRect()
+    designElement.browserBounds = {
+      x: bounds.x - contentBounds.x,
+      y: bounds.y - contentBounds.y,
+      width: bounds.width,
+      height: bounds.height
+    }
+    if (embedExternalImages) await embedImageSource(designElement, domElement, assetView)
+  }
+
+  for (const [designText, domText] of pairs.texts) {
+    const range = domText.ownerDocument.createRange()
+    range.selectNodeContents(domText)
+    const bounds = range.getBoundingClientRect()
+    designText.browserBounds = {
+      x: bounds.x - contentBounds.x,
+      y: bounds.y - contentBounds.y,
+      width: bounds.width,
+      height: bounds.height
+    }
+    range.detach()
   }
 
   return nextDocument
@@ -283,6 +418,9 @@ function copyComputedStyles(
 export function createBrowserCSSRuntime(options: BrowserCSSRuntimeOptions = {}): CSSRuntime {
   const browserDocument = resolveBrowserDocument(options.document)
   const sandbox = options.sandbox ?? 'shadow-root'
+  if (sandbox === 'shadow-root' && options.viewport) {
+    throw new TypeError('Browser CSS runtime viewport requires the iframe sandbox')
+  }
 
   return {
     kind: 'browser',
@@ -290,7 +428,23 @@ export function createBrowserCSSRuntime(options: BrowserCSSRuntimeOptions = {}):
     serializeHTML,
     computeStyles: (designDocument, cssText = '', computeOptions = {}) =>
       sandbox === 'iframe'
-        ? computeStylesInIframe(browserDocument, designDocument, cssText, computeOptions)
-        : computeStylesInShadowRoot(browserDocument, designDocument, cssText, computeOptions)
+        ? computeStylesInIframe(
+            browserDocument,
+            designDocument,
+            cssText,
+            computeOptions,
+            options.viewport,
+            options.embedExternalImages,
+            options.baseURL
+          )
+        : computeStylesInShadowRoot(
+            browserDocument,
+            designDocument,
+            cssText,
+            computeOptions,
+            options.viewport,
+            options.embedExternalImages,
+            options.baseURL
+          )
   }
 }

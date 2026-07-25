@@ -407,6 +407,130 @@ describe('@open-pencil/dom-css conversion', () => {
     expect(roundTripStack.inlineStyle?.['column-gap']).toBe('24px')
   })
 
+  it('maps browser-resolved CSS Grid tracks and gaps to editable grid layout', () => {
+    const graph = designDocumentToSceneGraph({
+      type: 'document',
+      children: [
+        {
+          type: 'element',
+          tagName: 'section',
+          attrs: { class: 'pricing-grid' },
+          computedStyle: {
+            display: 'grid',
+            width: '720px',
+            height: '240px',
+            'grid-template-columns': '224px 224px 224px',
+            'grid-template-rows': '240px',
+            'column-gap': '24px',
+            'row-gap': '16px'
+          },
+          children: [
+            {
+              type: 'element',
+              tagName: 'article',
+              attrs: { class: 'price-card' },
+              computedStyle: { width: '224px', height: '240px' },
+              children: []
+            }
+          ]
+        }
+      ]
+    })
+    const page = graph.getPages()[0]
+    const grid = expectFrame(page ? graph.getChildren(page.id)[0] : undefined)
+
+    expect(grid.layoutMode).toBe('GRID')
+    expect(grid.gridTemplateColumns).toEqual([
+      { sizing: 'FIXED', value: 224 },
+      { sizing: 'FIXED', value: 224 },
+      { sizing: 'FIXED', value: 224 }
+    ])
+    expect(grid.gridTemplateRows).toEqual([{ sizing: 'FIXED', value: 240 }])
+    expect(grid.gridColumnGap).toBe(24)
+    expect(grid.gridRowGap).toBe(16)
+  })
+
+  it('maps inline SVG paths to editable vector nodes', () => {
+    const graph = designDocumentToSceneGraph({
+      type: 'document',
+      children: [
+        {
+          type: 'element',
+          tagName: 'svg',
+          attrs: {
+            class: 'check-icon',
+            viewBox: '0 0 24 24',
+            fill: 'none',
+            stroke: 'currentColor'
+          },
+          computedStyle: {
+            color: 'rgb(22, 163, 74)',
+            width: '24px',
+            height: '24px'
+          },
+          children: [
+            {
+              type: 'element',
+              tagName: 'path',
+              attrs: {
+                d: 'M5 12l4 4L19 6',
+                fill: 'none',
+                stroke: 'currentColor',
+                'stroke-width': '2',
+                'stroke-linecap': 'round',
+                'stroke-linejoin': 'round'
+              },
+              children: []
+            }
+          ]
+        }
+      ]
+    })
+    const page = graph.getPages()[0]
+    const icon = expectFrame(page ? graph.getChildren(page.id)[0] : undefined)
+    const path = graph.getChildren(icon.id)[0]
+
+    expect(icon.name).toBe('check-icon')
+    expect(path?.type).toBe('VECTOR')
+    if (path?.type !== 'VECTOR') return
+    expect(path.vectorNetwork?.vertices.length).toBeGreaterThan(0)
+    expect(path.strokes[0]?.weight).toBe(2)
+  })
+
+  it('uses browser-measured multiline text bounds instead of fixed text height', () => {
+    const graph = designDocumentToSceneGraph({
+      type: 'document',
+      children: [
+        {
+          type: 'element',
+          tagName: 'p',
+          attrs: { class: 'description' },
+          computedStyle: {
+            color: 'rgb(15, 23, 42)',
+            'font-size': '18px',
+            'line-height': '24px',
+            width: '180px'
+          },
+          browserBounds: { x: 0, y: 0, width: 180, height: 96 },
+          children: [
+            {
+              type: 'text',
+              text: 'Browser measured text wraps across four lines.',
+              browserBounds: { x: 0, y: 0, width: 172, height: 96 }
+            }
+          ]
+        }
+      ]
+    })
+    const page = graph.getPages()[0]
+    const paragraph = expectFrame(page ? graph.getChildren(page.id)[0] : undefined)
+    const text = expectText(graph.getChildren(paragraph.id)[0])
+
+    expect(text.width).toBe(180)
+    expect(text.height).toBe(96)
+    expect(text.lineHeight).toBe(24)
+  })
+
   it('maps flex wrapping, align-self, clipping, and absolute positioning', () => {
     const graph = designDocumentToSceneGraph({
       type: 'document',

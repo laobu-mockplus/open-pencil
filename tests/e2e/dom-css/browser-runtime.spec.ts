@@ -353,6 +353,21 @@ test.describe('@open-pencil/dom-css browser CSS runtime oracle', () => {
     expect(textNode?.maxLines).toBe(1)
   })
 
+  test('projects browser-measured multiline height into scene graph text fields', async ({
+    page
+  }) => {
+    const textNode = await publicBrowserTextNode(
+      page,
+      '<p class="description">Measure actual browser wrapping so longer marketing copy does not overlap the next block.</p>',
+      '.description { font-size: 18px; line-height: 24px; margin: 0; width: 180px; }'
+    )
+
+    expect(textNode?.type).toBe('TEXT')
+    expect(textNode?.width).toBe(180)
+    expect(textNode?.height).toBeGreaterThan(48)
+    expect(textNode?.lineHeight).toBe(24)
+  })
+
   test('resolves flex wrap, self alignment, absolute positioning, and clipping', async ({
     page
   }) => {

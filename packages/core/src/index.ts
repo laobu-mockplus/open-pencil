@@ -367,9 +367,14 @@ export {
   parseOpenPencilClipboard,
   buildFigmaClipboardHTML,
   buildOpenPencilClipboardHTML,
+  exportSceneFragment,
+  importSceneFragment,
   prefetchFigmaSchema,
+  type ImportedSceneFragment,
   type TextPictureBuilder,
-  type OpenPencilClipboardData
+  type OpenPencilClipboardData,
+  type OpenPencilClipboardNode,
+  type OpenPencilSceneFragment
 } from './clipboard'
 export { probeGlyphOutlineCommands, type GlyphOutlineProbe } from './text/opentype'
 

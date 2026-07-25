@@ -1,3 +1,7 @@
+/**
+ * DesignDOM → SceneGraph 映射器。
+ * 这里只映射上游运行时已经确认的样式与几何事实，不自行补写模板语义或猜测布局。
+ */
 import {
   SceneGraph,
   type Fill,
@@ -16,7 +20,16 @@ import {
   parseCSSNumber,
   pickStyle
 } from './css-values'
-import type { DesignDocument, DesignElement, DesignNode, DesignStyleDeclaration } from './types'
+import { applyGridLayout } from './grid-layout'
+import { applyPositioning, firstCSSNumber } from './layout-values'
+import { createSVGNode } from './svg-to-scene-graph'
+import type {
+  DesignBounds,
+  DesignDocument,
+  DesignElement,
+  DesignNode,
+  DesignStyleDeclaration
+} from './types'
 
 const DOM_CSS_PLUGIN_ID = 'open-pencil-dom-css'
 const IMAGE_SOURCE_URL_KEY = 'image-source-url'
@@ -48,14 +61,6 @@ function isTextLikeElement(node: DesignElement): boolean {
   ].includes(node.tagName.toLowerCase())
 }
 
-function firstCSSNumber(style: DesignStyleDeclaration, ...properties: string[]): number | null {
-  for (const property of properties) {
-    const parsed = parseCSSNumber(pickStyle(style, property))
-    if (parsed !== null) return parsed
-  }
-  return null
-}
-
 function fillsFromStyle(style: DesignStyleDeclaration, property: string): Fill[] {
   return colorToFillFromCSS(pickStyle(style, property))
 }
@@ -71,7 +76,11 @@ function aspectRatioFromCSS(value: string | undefined): number | null {
   return null
 }
 
-function setNodeBox(node: SceneNode, style: DesignStyleDeclaration): void {
+function setNodeBox(
+  node: SceneNode,
+  style: DesignStyleDeclaration,
+  browserBounds?: DesignBounds
+): void {
   const width = firstCSSNumber(style, 'width')
   const height = firstCSSNumber(style, 'height')
   const minWidth = firstCSSNumber(style, 'min-width')
@@ -80,7 +89,9 @@ function setNodeBox(node: SceneNode, style: DesignStyleDeclaration): void {
   const maxHeight = firstCSSNumber(style, 'max-height')
   const aspectRatio = aspectRatioFromCSS(pickStyle(style, 'aspect-ratio'))
   if (width !== null) node.width = width
+  else if (browserBounds && browserBounds.width > 0) node.width = browserBounds.width
   if (height !== null) node.height = height
+  else if (browserBounds && browserBounds.height > 0) node.height = browserBounds.height
   if (height === null && width !== null && aspectRatio !== null) node.height = width / aspectRatio
   if (width === null && height !== null && aspectRatio !== null) node.width = height * aspectRatio
   if (minWidth !== null) node.minWidth = minWidth
@@ -209,16 +220,6 @@ function applyFlexGap(node: SceneNode, style: DesignStyleDeclaration): void {
   node.counterAxisSpacing = (isHorizontal ? rowGap : columnGap) ?? (isWrapped ? (gap ?? 0) : 0)
 }
 
-function applyPositioning(node: SceneNode, style: DesignStyleDeclaration): void {
-  const position = pickStyle(style, 'position')
-  if (position === 'absolute' || position === 'fixed') node.layoutPositioning = 'ABSOLUTE'
-
-  const left = firstCSSNumber(style, 'left')
-  const top = firstCSSNumber(style, 'top')
-  if (left !== null) node.x = left
-  if (top !== null) node.y = top
-}
-
 function applyPadding(node: SceneNode, style: DesignStyleDeclaration): void {
   node.paddingTop = firstCSSNumber(style, 'padding-top', 'padding-block', 'padding') ?? 0
   node.paddingRight = firstCSSNumber(style, 'padding-right', 'padding-inline', 'padding') ?? 0
@@ -252,8 +253,16 @@ function applyImageFill(
   if (element.tagName.toLowerCase() !== 'img') return
   const source = element.attrs.src
   const bytes = bytesFromDataURL(source)
+  const sourceAssetURL = element.sourceAssetURL
+  if (sourceAssetURL) {
+    node.pluginData.push({
+      pluginId: DOM_CSS_PLUGIN_ID,
+      key: IMAGE_SOURCE_URL_KEY,
+      value: sourceAssetURL
+    })
+  }
   if (!bytes) {
-    if (source) {
+    if (source && !sourceAssetURL) {
       node.pluginData.push({
         pluginId: DOM_CSS_PLUGIN_ID,
         key: IMAGE_SOURCE_URL_KEY,
@@ -283,7 +292,7 @@ function applyElementStyle(
   element: DesignElement,
   style: DesignStyleDeclaration
 ): void {
-  setNodeBox(node, style)
+  setNodeBox(node, style, element.browserBounds)
   applyPositioning(node, style)
   applyPadding(node, style)
 
@@ -327,10 +336,17 @@ function applyElementStyle(
     node.layoutWrap = pickStyle(style, 'flex-wrap') === 'wrap' ? 'WRAP' : 'NO_WRAP'
     applyFlexGap(node, style)
   }
+  if (display === 'grid' || display === 'inline-grid') {
+    applyGridLayout(node, style)
+  }
 }
 
-function applyTextStyle(node: SceneNode, style: DesignStyleDeclaration): void {
-  setNodeBox(node, style)
+function applyTextStyle(
+  node: SceneNode,
+  style: DesignStyleDeclaration,
+  browserBounds?: DesignBounds
+): void {
+  setNodeBox(node, style, browserBounds)
   applyPositioning(node, style)
 
   const fills = fillsFromStyle(style, 'color')
@@ -379,15 +395,16 @@ function createTextNode(
   graph: SceneGraph,
   parentId: string,
   text: string,
-  style: DesignStyleDeclaration
+  style: DesignStyleDeclaration,
+  browserBounds?: DesignBounds
 ) {
   const node = graph.createNode('TEXT', parentId, {
     name: text.slice(0, 32) || 'Text',
     text,
-    width: Math.max(text.length * 8, 1),
-    height: 20
+    width: browserBounds?.width ?? Math.max(text.length * 8, 1),
+    height: browserBounds?.height ?? 20
   })
-  applyTextStyle(node, style)
+  applyTextStyle(node, style, browserBounds)
   return node
 }
 
@@ -436,12 +453,15 @@ function hasBoxStyle(style: DesignStyleDeclaration): boolean {
 
 function createElementNode(graph: SceneGraph, parentId: string, element: DesignElement): SceneNode {
   const style = mergedStyle(element)
+  if (element.tagName.toLowerCase() === 'svg') {
+    return createSVGNode(graph, parentId, element, style)
+  }
   if (
     isTextLikeElement(element) &&
     !hasBoxStyle(style) &&
     element.children.every((child) => child.type === 'text')
   ) {
-    return createTextNode(graph, parentId, textContent(element), style)
+    return createTextNode(graph, parentId, textContent(element), style, element.browserBounds)
   }
 
   const node = graph.createNode('FRAME', parentId, {
@@ -465,7 +485,7 @@ function createDesignNode(
 ): SceneNode | null {
   if (node.type === 'text') {
     if (node.text.trim().length === 0) return null
-    return createTextNode(graph, parentId, node.text, inheritedStyle)
+    return createTextNode(graph, parentId, node.text, inheritedStyle, node.browserBounds)
   }
 
   return createElementNode(graph, parentId, node)
