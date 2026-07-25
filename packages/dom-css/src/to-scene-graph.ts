@@ -13,6 +13,12 @@ import { TRANSPARENT } from '@open-pencil/scene-graph/constants'
 import { computeImageHash } from '@open-pencil/scene-graph/images'
 
 import {
+  applyBrowserRelativePosition,
+  applyFlexChildMargins,
+  applySourceKey,
+  applyUnsupportedGridAlignment
+} from './browser-layout-fidelity'
+import {
   colorToFillFromCSS,
   colorToStrokeFromCSS,
   dropShadowFromCSS,
@@ -338,6 +344,7 @@ function applyElementStyle(
   }
   if (display === 'grid' || display === 'inline-grid') {
     applyGridLayout(node, style)
+    node.counterAxisAlign = counterAxisAlignFromCSS(pickStyle(style, 'align-items'))
   }
 }
 
@@ -451,17 +458,35 @@ function hasBoxStyle(style: DesignStyleDeclaration): boolean {
   ].some((property) => pickStyle(style, property) !== undefined)
 }
 
-function createElementNode(graph: SceneGraph, parentId: string, element: DesignElement): SceneNode {
+function createElementNode(
+  graph: SceneGraph,
+  parentId: string,
+  element: DesignElement,
+  parentBounds?: DesignBounds,
+  parentLayoutMode: SceneNode['layoutMode'] = 'NONE'
+): SceneNode {
   const style = mergedStyle(element)
   if (element.tagName.toLowerCase() === 'svg') {
-    return createSVGNode(graph, parentId, element, style)
+    const svgNode = createSVGNode(graph, parentId, element, style)
+    applySourceKey(svgNode, element)
+    applyBrowserRelativePosition(svgNode, element.browserBounds, parentBounds, parentLayoutMode)
+    return svgNode
   }
   if (
     isTextLikeElement(element) &&
     !hasBoxStyle(style) &&
     element.children.every((child) => child.type === 'text')
   ) {
-    return createTextNode(graph, parentId, textContent(element), style, element.browserBounds)
+    const textNode = createTextNode(
+      graph,
+      parentId,
+      textContent(element),
+      style,
+      element.browserBounds
+    )
+    applySourceKey(textNode, element)
+    applyBrowserRelativePosition(textNode, element.browserBounds, parentBounds, parentLayoutMode)
+    return textNode
   }
 
   const node = graph.createNode('FRAME', parentId, {
@@ -469,10 +494,14 @@ function createElementNode(graph: SceneGraph, parentId: string, element: DesignE
     clipsContent: false
   })
   applyElementStyle(graph, node, element, style)
+  applySourceKey(node, element)
+  applyBrowserRelativePosition(node, element.browserBounds, parentBounds, parentLayoutMode)
 
   for (const child of element.children) {
-    createDesignNode(graph, node.id, child, style)
+    createDesignNode(graph, node.id, child, style, element.browserBounds, node.layoutMode)
   }
+  applyFlexChildMargins(graph, node, element.children, element.browserBounds)
+  applyUnsupportedGridAlignment(graph, node, element.children, element.browserBounds)
 
   return node
 }
@@ -481,14 +510,18 @@ function createDesignNode(
   graph: SceneGraph,
   parentId: string,
   node: DesignNode,
-  inheritedStyle: DesignStyleDeclaration = {}
+  inheritedStyle: DesignStyleDeclaration = {},
+  parentBounds?: DesignBounds,
+  parentLayoutMode: SceneNode['layoutMode'] = 'NONE'
 ): SceneNode | null {
   if (node.type === 'text') {
     if (node.text.trim().length === 0) return null
-    return createTextNode(graph, parentId, node.text, inheritedStyle, node.browserBounds)
+    const textNode = createTextNode(graph, parentId, node.text, inheritedStyle, node.browserBounds)
+    applyBrowserRelativePosition(textNode, node.browserBounds, parentBounds, parentLayoutMode)
+    return textNode
   }
 
-  return createElementNode(graph, parentId, node)
+  return createElementNode(graph, parentId, node, parentBounds, parentLayoutMode)
 }
 
 function fitPageToChildren(page: SceneNode, graph: SceneGraph): void {
